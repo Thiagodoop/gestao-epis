@@ -880,124 +880,45 @@ elif menu == "Estoque de EPIs":
         else:
             st.info("Nenhum EPI cadastrado ainda.")
 
-# ==========================================
-# 3. REGISTRAR ENTREGA DE EPI
-# ==========================================
-elif menu == "Registrar Entrega de EPI":
-    st.title("✍️ Registro de Entrega e Cautela de EPI")
-    st.caption("Preencha a cautela de fornecimento e colha a assinatura digital do colaborador.")
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, nome, matricula, cargo FROM funcionarios WHERE status='Ativo' ORDER BY nome ASC")
-    funcs = cursor.fetchall()
-
-    if not funcs:
-        st.warning("Cadastre funcionários primeiro antes de registrar entregas.")
-        conn.close()
-    else:
-        func_dict = {f"{f[1]} (Matrícula: {f[2]} | Cargo: {f[3]})": (f[0], f[3]) for f in funcs}
-        colab_escolhido = st.selectbox("Selecione o Colaborador:", list(func_dict.keys()))
-        func_id, cargo_colab = func_dict[colab_escolhido]
-
-        cursor.execute("SELECT epi_id FROM matriz_epi_cargo WHERE cargo = ?", (cargo_colab,))
-        epis_matriz_ids = [row[0] for row in cursor.fetchall()]
-
-        col_filtro, _ = st.columns([2, 2])
-        with col_filtro:
-            filtrar_matriz = st.checkbox(f"🎯 Filtrar apenas EPIs da Matriz do cargo ({cargo_colab})", value=bool(epis_matriz_ids))
-
-        if filtrar_matriz and epis_matriz_ids:
-            placeholders = ",".join("?" for _ in epis_matriz_ids)
-            cursor.execute(f"SELECT id, nome, ca, quantidade, validade_ca FROM epis WHERE id IN ({placeholders}) ORDER BY nome ASC", epis_matriz_ids)
-        else:
-            cursor.execute("SELECT id, nome, ca, quantidade, validade_ca FROM epis ORDER BY nome ASC")
-        
-        epis_disponiveis = cursor.fetchall()
-        conn.close()
-
-        if not epis_disponiveis:
-            st.warning("Nenhum EPI disponível no estoque.")
-        else:
-            epi_dict = {f"{e[1]} - CA: {e[2]} (Saldo: {e[3]})": (e[0], e[3], e[4], e[2]) for e in epis_disponiveis}
-            col1, col2 = st.columns(2)
-            with col1:
-                motivo = st.selectbox("Motivo da Entrega:", ["Admissional", "Substituição por Desgaste", "Extravio/Dano", "Mudança de Função"])
-            with col2:
-                epi_escolhido = st.selectbox("Selecione o EPI:", list(epi_dict.keys()))
-                dados_epi_sel = epi_dict[epi_escolhido]
-                qtd_max = dados_epi_sel[1]
-
-                if qtd_max <= 0:
-                    st.error("⚠️ Este EPI está com saldo ZERO no estoque.")
-                    qtd_entregar = 0
-                    saldo_zerado = True
-                else:
-                    qtd_entregar = st.number_input("Quantidade a Entregar:", min_value=1, max_value=qtd_max, value=1)
-                    saldo_zerado = False
-
-            val_ca_raw = dados_epi_sel[2]
-            ca_bloqueado = False
-            val_ca_date = None
-
-            if val_ca_raw:
-                for fmt in ["%Y-%m-%d", "%d/%m/%Y"]:
-                    try:
-                        val_ca_date = datetime.strptime(str(val_ca_raw).strip()[:10], fmt).date()
-                        break
-                    except ValueError: pass
-
-            if val_ca_date:
-                hoje = datetime.now().date()
-                dias_restantes = (val_ca_date - hoje).days
-                data_val_formatada = formatar_data_br(val_ca_date)
-                if dias_restantes < 0:
-                    st.error(f"⛔ **BLOQUEIO NR-6:** O CA nº **{dados_epi_sel[3]}** venceu em **{data_val_formatada}**. Entrega proibida!")
-                    ca_bloqueado = True
-                elif dias_restantes <= 30:
-                    st.warning(f"⚠️ **ATENÇÃO:** O CA nº **{dados_epi_sel[3]}** vence em {dias_restantes} dias ({data_val_formatada}).")
-                else:
-                    st.success(f"✅ CA nº **{dados_epi_sel[3]}** válido até **{data_val_formatada}**.")
-
-            travar_botao = ca_bloqueado or saldo_zerado
-
-            st.markdown("---")
+st.markdown("---")
             st.subheader("Termo de Recebimento & Assinatura Digital")
             st.caption("Declaro ter recebido os EPIs descritos em perfeito estado, comprometendo-me ao uso obrigatório conforme NR-6.")
 
-            canvas_result = st_canvas(
-                fill_color="rgba(255, 255, 255, 0)",
-                stroke_width=2,
-                stroke_color="#000000",
-                background_color="#FFFFFF",
-                height=150,
-                width=500,
-                drawing_mode="freedraw",
-                return_image_data=True,
-                key="canvas_assinatura",
+            # Controlo para expandir o tamanho no telemóvel
+            col_expandir, _ = st.columns([2, 2])
+            with col_expandir:
+                modo_expandido = st.toggle("📱 Expandir área de assinatura (Ideal p/ Telemóvel)", value=False)
+
+            # Define as dimensões com base na opção selecionada
+            if modo_expandido:
+                largura_canvas = 700  # Área ampla e espaçosa
+                altura_canvas = 300
+            else:
+                largura_canvas = 480  # Tamanho padrão compacto
+                altura_canvas = 160
+
+            # Moldura visual ao redor do quadro para melhor enquadramento no ecrã
+            st.markdown(
+                f"""
+                <div style="border: 2px dashed #D8C7A8; border-radius: 10px; padding: 6px; display: inline-block; background-color: #FFFFFF;">
+                """, 
+                unsafe_allow_html=True
             )
 
-            if st.button("Confirmar Entrega e Dar Baixa", disabled=travar_botao, use_container_width=True):
-                if canvas_result.image_data is not None and canvas_result.image_data[:, :, 3].sum() > 0:
-                    epi_id = dados_epi_sel[0]
-                    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    caminho_ass = os.path.join("assinaturas", f"ass_{func_id}_{timestamp_str}.png")
-                    Image.fromarray(canvas_result.image_data.astype("uint8")).save(caminho_ass)
-
-                    conn = get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("""
-                        INSERT INTO entregas (funcionario_id, epi_id, quantidade, motivo, caminho_assinatura, status_item)
-                        VALUES (?, ?, ?, ?, ?, 'Em Uso')
-                    """, (func_id, epi_id, qtd_entregar, motivo, caminho_ass))
-                    cursor.execute("UPDATE epis SET quantidade = quantidade - ? WHERE id = ?", (qtd_entregar, epi_id))
-                    conn.commit()
-                    conn.close()
-
-                    st.success("Entrega registrada e saldo de estoque atualizado!")
-                    st.rerun()
-                else:
-                    st.error("Colete a assinatura do colaborador no quadro antes de confirmar.")
+            canvas_result = st_canvas(
+                fill_color="rgba(255, 255, 255, 0)",
+                stroke_width=3,  # Traço ligeiramente mais grosso para facilitar o toque no ecrã
+                stroke_color="#000000",
+                background_color="#FFFFFF",
+                height=altura_canvas,
+                width=largura_canvas,
+                drawing_mode="freedraw",
+                return_image_data=True,
+                key=f"canvas_assinatura_{modo_expandido}",  # Chave dinâmica para redesenhar no tamanho certo
+            )
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.caption("✍️ Assine com o dedo ou caneta no espaço branco acima.")
 
 # ==========================================
 # 4. DEVOLUÇÃO DE EPI
