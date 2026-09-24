@@ -1,0 +1,6 @@
+streamlit
+pillow
+streamlit-drawable-canvas
+reportlab
+requests
+beautifulsoup4
